@@ -6,14 +6,28 @@ Install runtime:
 
 ```bash
 sudo apt update
-sudo apt install -y nodejs npm sqlite3 nginx
+sudo apt install -y nodejs npm mariadb-server nginx
 ```
 
-Run once:
+Create database:
+
+```bash
+mysql -uroot -p
+```
+
+```sql
+CREATE DATABASE hrms_db CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
+CREATE USER 'hrms_user'@'localhost' IDENTIFIED BY 'change-this-password';
+GRANT ALL PRIVILEGES ON hrms_db.* TO 'hrms_user'@'localhost';
+FLUSH PRIVILEGES;
+EXIT;
+```
+
+Install app dependencies:
 
 ```bash
 cd /var/www/hrms
-npm start
+npm install
 ```
 
 For production, use PM2:
@@ -21,16 +35,9 @@ For production, use PM2:
 ```bash
 sudo npm install -g pm2
 cd /var/www/hrms
-HOST=127.0.0.1 PORT=3000 HRMS_DB=/var/lib/hrms/hrms.db pm2 start src/server.js --name hrms
+HOST=127.0.0.1 PORT=3000 DB_HOST=127.0.0.1 DB_NAME=hrms_db DB_USER=hrms_user DB_PASSWORD=change-this-password pm2 start src/server.js --name hrms
 pm2 save
 pm2 startup
-```
-
-Create database directory:
-
-```bash
-sudo mkdir -p /var/lib/hrms
-sudo chown -R $USER:$USER /var/lib/hrms
 ```
 
 ## Nginx Reverse Proxy
@@ -54,11 +61,16 @@ server {
 
 ```bash
 docker build -t avyukta-hrms .
-docker run -d --name hrms -p 3000:3000 -v hrms_data:/data avyukta-hrms
+docker run -d --name hrms -p 3000:3000 \
+  -e DB_HOST=host.docker.internal \
+  -e DB_NAME=hrms_db \
+  -e DB_USER=hrms_user \
+  -e DB_PASSWORD=change-this-password \
+  avyukta-hrms
 ```
 
 ## Notes
 
 - The app no longer needs Google Sheets or Apps Script.
-- SQLite is stored in `HRMS_DB`; back this file up regularly.
+- MariaDB stores all HRMS data. Back up `hrms_db` regularly.
 - Put Nginx/Cloudflare SSL in front of the Node server for production.
