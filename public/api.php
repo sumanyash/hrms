@@ -3,6 +3,13 @@ declare(strict_types=1);
 
 header('Content-Type: application/json; charset=utf-8');
 header('X-Content-Type-Options: nosniff');
+header('Cache-Control: no-store, no-cache, must-revalidate, max-age=0');
+header('Pragma: no-cache');
+
+const REQUIRED_TABLES = [
+    'employees', 'employee_attrition', 'leaves', 'expenses', 'tokens',
+    'cards', 'attendance', 'shifts', 'monthly_salary', 'audit_log', 'hrms_meta'
+];
 
 if ($_SERVER['REQUEST_METHOD'] === 'OPTIONS') {
     http_response_code(204);
@@ -11,7 +18,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'OPTIONS') {
 
 function json_response(array $payload, int $status = 200): void {
     http_response_code($status);
-    echo json_encode($payload, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+    echo json_encode($payload, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES | JSON_INVALID_UTF8_SUBSTITUTE);
     exit;
 }
 
@@ -55,6 +62,12 @@ function execute(string $sql, array $params = []): void {
     $stmt->execute($params);
 }
 
+function fetch_value(string $sql, array $params = []): mixed {
+    $stmt = db()->prepare($sql);
+    $stmt->execute($params);
+    return $stmt->fetchColumn();
+}
+
 function num(mixed $value, float $fallback = 0): float {
     return is_numeric($value) ? (float)$value : $fallback;
 }
@@ -63,7 +76,52 @@ function today(): string {
     return date('Y-m-d');
 }
 
+function schema_ready(): bool {
+    $placeholders = implode(',', array_fill(0, count(REQUIRED_TABLES), '?'));
+    $count = (int)fetch_value(
+        "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema = DATABASE() AND table_name IN ($placeholders)",
+        REQUIRED_TABLES
+    );
+    return $count === count(REQUIRED_TABLES);
+}
+
+function ensure_index(string $table, string $index, string $columns): void {
+    $exists = (int)fetch_value(
+        "SELECT COUNT(*) FROM information_schema.statistics WHERE table_schema = DATABASE() AND table_name = ? AND index_name = ?",
+        [$table, $index]
+    );
+    if ($exists === 0) {
+        exec_sql("CREATE INDEX $index ON $table ($columns)");
+    }
+}
+
+function ensure_indexes(): void {
+    static $done = false;
+    if ($done) return;
+    $marked = fetch_value("SELECT meta_value FROM hrms_meta WHERE meta_key = 'indexes_v1'");
+    if ($marked === 'done') {
+        $done = true;
+        return;
+    }
+    ensure_index('employees', 'idx_employees_status_dept', 'status, dept');
+    ensure_index('leaves', 'idx_leaves_emp_status', 'empId, status');
+    ensure_index('leaves', 'idx_leaves_status_applied', 'status, appliedOn');
+    ensure_index('expenses', 'idx_expenses_emp_status', 'empId, status');
+    ensure_index('expenses', 'idx_expenses_status_applied', 'status, appliedOn');
+    ensure_index('tokens', 'idx_tokens_emp_issued', 'empId, issuedOn');
+    ensure_index('cards', 'idx_cards_emp_issued', 'empId, issuedOn');
+    ensure_index('attendance', 'idx_attendance_emp_date', 'empId, date');
+    ensure_index('audit_log', 'idx_audit_action_created', 'action, createdAt');
+    execute("INSERT INTO hrms_meta (meta_key, meta_value) VALUES ('indexes_v1', 'done') ON DUPLICATE KEY UPDATE meta_value = VALUES(meta_value)");
+    $done = true;
+}
+
 function init_db(): void {
+    if (schema_ready()) {
+        ensure_indexes();
+        return;
+    }
+
     exec_sql("CREATE TABLE IF NOT EXISTS employees (
         id VARCHAR(40) PRIMARY KEY,
         sno INT,
@@ -185,6 +243,12 @@ function init_db(): void {
         createdAt TIMESTAMP DEFAULT CURRENT_TIMESTAMP
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
 
+    exec_sql("CREATE TABLE IF NOT EXISTS hrms_meta (
+        meta_key VARCHAR(80) PRIMARY KEY,
+        meta_value VARCHAR(255),
+        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
+
     $count = fetch_all("SELECT COUNT(*) AS count FROM employees")[0]['count'] ?? 0;
     if ((int)$count === 0) {
         $seed = [
@@ -196,6 +260,8 @@ function init_db(): void {
             execute("INSERT INTO employees (id,sno,fname,lname,dept,doj,salary,role,pcode,phone,email,dob) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)", $employee);
         }
     }
+
+    ensure_indexes();
 }
 
 function audit_log(string $action, array $payload): void {
@@ -227,7 +293,7 @@ function upsert_employee(array $p): void {
 function handle_action(string $action, array $p): array {
     switch ($action) {
         case 'health':
-            return ['status' => 'ok', 'database' => db_config()['name'], 'runtime' => 'php'];
+            return ['status' => 'ok', 'database' => db_config()['name'], 'runtime' => 'php', 'schema' => schema_ready() ? 'ready' : 'created'];
         case 'getEmployees':
             return ['status' => 'success', 'employees' => fetch_all("SELECT sno,id,fname,lname,dept,doj,salary,role,pcode,phone,email,dob,pass FROM employees WHERE status='Active' ORDER BY sno,id")];
         case 'getLeaves':
@@ -382,6 +448,9 @@ function handle_action(string $action, array $p): array {
 
 try {
     $raw = file_get_contents('php://input') ?: '';
+    if (strlen($raw) > 1024 * 1024) {
+        json_response(['status' => 'error', 'message' => 'Request body too large'], 413);
+    }
     $body = [];
     if ($raw !== '') {
         $decoded = json_decode($raw, true);

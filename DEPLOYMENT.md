@@ -79,5 +79,5 @@ curl "https://hrms.clouddialer.in/api.php?action=health"
 Expected:
 
 ```json
-{"status":"ok","database":"hrms_db","runtime":"php"}
+{"status":"ok","database":"hrms_db","runtime":"php","schema":"ready"}
 ```
