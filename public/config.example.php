@@ -7,4 +7,5 @@ return [
     'password' => 'change-this-password',
     'crm_employees_url' => 'https://urm.avyuktacrm.com/api/user_details.php',
     'crm_bearer_token' => '',
+    'crm_verify_ssl' => false,
 ];

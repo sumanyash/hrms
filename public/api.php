@@ -37,6 +37,7 @@ function db_config(): array {
         'password' => $fileConfig['password'] ?? getenv('DB_PASSWORD') ?: '',
         'crm_employees_url' => $crmUrl,
         'crm_bearer_token' => $fileConfig['crm_bearer_token'] ?? getenv('CRM_BEARER_TOKEN') ?: '',
+        'crm_verify_ssl' => (bool)($fileConfig['crm_verify_ssl'] ?? filter_var(getenv('CRM_VERIFY_SSL') ?: 'false', FILTER_VALIDATE_BOOLEAN)),
     ];
 }
 
@@ -400,6 +401,8 @@ function fetch_crm_employees(): array {
             CURLOPT_CONNECTTIMEOUT => 8,
             CURLOPT_TIMEOUT => 30,
             CURLOPT_HTTPHEADER => $headers,
+            CURLOPT_SSL_VERIFYPEER => (bool)$config['crm_verify_ssl'],
+            CURLOPT_SSL_VERIFYHOST => $config['crm_verify_ssl'] ? 2 : 0,
         ]);
         $body = curl_exec($ch);
         $code = (int)curl_getinfo($ch, CURLINFO_RESPONSE_CODE);

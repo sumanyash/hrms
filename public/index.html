@@ -1170,13 +1170,22 @@ function resolveEmpName(empId, empName) {
 }
 const deptBadge  = d => ({ HR:'b-blue',Sales:'b-green',Support:'b-purple',Software:'b-blue',Accounts:'b-orange',Admin:'b-red' }[d] || 'b-gray');
 
+function positiveNumber(value) {
+  const n = Number(value);
+  return Number.isFinite(n) && n > 0 ? n : 0;
+}
+
 function payCalc(sal, empId) {
   sal = Number(sal) || 0;
   const basic = Math.round(sal * .5), hra = Math.round(sal * .25);
   const emp = empId ? S.employees.find(function(e){ return e.id === empId; }) : null;
-  const pf = emp && emp.pfAmount !== undefined && emp.pfAmount !== '' ? Number(emp.pfAmount) || 0 : Math.round(basic * .12);
+  const configuredPf = emp ? positiveNumber(emp.pfAmount) : 0;
+  const configuredTax = emp ? positiveNumber(emp.incomeTax) : 0;
+  const configuredGross = emp ? positiveNumber(emp.grossSalary) : 0;
+  const configuredNet = emp ? positiveNumber(emp.netSalary) : 0;
+  const pf = configuredPf || Math.round(basic * .12);
   const pt = 200;
-  const tds = emp && emp.incomeTax !== undefined && emp.incomeTax !== '' ? Number(emp.incomeTax) || 0 : Math.round(sal * .05);
+  const tds = configuredTax || Math.round(sal * .05);
   // Token bonuses this month
   const tokenBonus = empId
     ? S.tokens.filter(function(t){ return t.empId === empId; })
@@ -1187,8 +1196,8 @@ function payCalc(sal, empId) {
     ? S.cards.filter(function(c){ return c.empId === empId; })
         .reduce(function(s,c){ return s + Number(c.totalAmount||0); }, 0)
     : 0;
-  const gross = emp && emp.grossSalary ? Number(emp.grossSalary) || sal : sal;
-  const baseNet = emp && emp.netSalary ? Number(emp.netSalary) || 0 : (gross - pf - pt - tds);
+  const gross = configuredGross || sal;
+  const baseNet = configuredNet || (gross - pf - pt - tds);
   const net = Math.max(0, baseNet + tokenBonus - cardPenalty);
   return { basic, hra, spec: Math.round(sal * .15), trans: Math.round(sal * .05),
            gross, pf, pt, tds, tokenBonus, cardPenalty, baseNet, net };
@@ -2042,9 +2051,9 @@ function empRows(emps) {
     <div><div class="emp-nm">${esc(e.fname)} ${esc(e.lname)}</div><div class="emp-id">${esc(e.id)}</div></div></div></td>
     <td><span class="badge ${deptBadge(e.dept)}">${esc(e.dept)}</span></td>
     <td style="font-size:11.5px;">${esc(e.doj || '—')}</td>
-    <td style="font-weight:700;">${fmt(e.grossSalary || e.salary)}</td>
-    <td style="font-weight:700;color:var(--success);">${fmt(e.netSalary || payCalc(e.salary, e.id).net)}</td>
-    <td style="color:var(--danger);">${fmt(e.pfAmount || payCalc(e.salary, e.id).pf)}</td>
+    <td style="font-weight:700;">${fmt(payCalc(e.salary, e.id).gross)}</td>
+    <td style="font-weight:700;color:var(--success);">${fmt(payCalc(e.salary, e.id).net)}</td>
+    <td style="color:var(--danger);">${fmt(payCalc(e.salary, e.id).pf)}</td>
     <td style="font-size:12px;">${esc(e.role || '—')}</td>
     <td style="font-size:11.5px;">${esc(empPhone(e))}</td>
     <td style="font-size:11.5px;">${esc(e.email || '—')}</td>
