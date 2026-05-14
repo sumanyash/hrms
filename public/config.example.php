@@ -5,4 +5,6 @@ return [
     'name' => 'hrms_db',
     'user' => 'hrms_user',
     'password' => 'change-this-password',
+    'crm_employees_url' => '',
+    'crm_bearer_token' => '',
 ];

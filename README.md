@@ -32,8 +32,12 @@ return [
     'name' => 'hrms_db',
     'user' => 'hrms_user',
     'password' => 'your-password',
+    'crm_employees_url' => '',
+    'crm_bearer_token' => '',
 ];
 ```
+
+Set `crm_employees_url` and `crm_bearer_token` when CRM employee sync is available.
 
 Default admin login:
 

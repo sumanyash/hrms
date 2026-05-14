@@ -31,6 +31,8 @@ function db_config(): array {
         'name' => $fileConfig['name'] ?? getenv('DB_NAME') ?: 'hrms_db',
         'user' => $fileConfig['user'] ?? getenv('DB_USER') ?: 'hrms_user',
         'password' => $fileConfig['password'] ?? getenv('DB_PASSWORD') ?: '',
+        'crm_employees_url' => $fileConfig['crm_employees_url'] ?? getenv('CRM_EMPLOYEES_URL') ?: '',
+        'crm_bearer_token' => $fileConfig['crm_bearer_token'] ?? getenv('CRM_BEARER_TOKEN') ?: '',
     ];
 }
 
@@ -95,6 +97,24 @@ function ensure_index(string $table, string $index, string $columns): void {
     }
 }
 
+function ensure_column(string $table, string $column, string $definition): void {
+    $exists = (int)fetch_value(
+        "SELECT COUNT(*) FROM information_schema.columns WHERE table_schema = DATABASE() AND table_name = ? AND column_name = ?",
+        [$table, $column]
+    );
+    if ($exists === 0) {
+        exec_sql("ALTER TABLE $table ADD COLUMN $column $definition");
+    }
+}
+
+function ensure_employee_salary_columns(): void {
+    ensure_column('employees', 'grossSalary', 'DECIMAL(12,2) DEFAULT 0');
+    ensure_column('employees', 'netSalary', 'DECIMAL(12,2) DEFAULT 0');
+    ensure_column('employees', 'pfAmount', 'DECIMAL(12,2) DEFAULT 0');
+    ensure_column('employees', 'incomeTax', 'DECIMAL(12,2) DEFAULT 0');
+    ensure_column('employees', 'source', "VARCHAR(40) DEFAULT 'manual'");
+}
+
 function ensure_indexes(): void {
     static $done = false;
     if ($done) return;
@@ -118,6 +138,7 @@ function ensure_indexes(): void {
 
 function init_db(): void {
     if (schema_ready()) {
+        ensure_employee_salary_columns();
         ensure_indexes();
         return;
     }
@@ -130,12 +151,17 @@ function init_db(): void {
         dept VARCHAR(120),
         doj VARCHAR(40),
         salary DECIMAL(12,2) DEFAULT 0,
+        grossSalary DECIMAL(12,2) DEFAULT 0,
+        netSalary DECIMAL(12,2) DEFAULT 0,
+        pfAmount DECIMAL(12,2) DEFAULT 0,
+        incomeTax DECIMAL(12,2) DEFAULT 0,
         role VARCHAR(160),
         pcode VARCHAR(20) DEFAULT '+91',
         phone VARCHAR(40),
         email VARCHAR(180),
         dob VARCHAR(40),
         pass VARCHAR(160) DEFAULT 'emp123',
+        source VARCHAR(40) DEFAULT 'manual',
         status VARCHAR(30) DEFAULT 'Active',
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
         updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
@@ -261,6 +287,7 @@ function init_db(): void {
         }
     }
 
+    ensure_employee_salary_columns();
     ensure_indexes();
 }
 
@@ -269,11 +296,12 @@ function audit_log(string $action, array $payload): void {
 }
 
 function upsert_employee(array $p): void {
-    execute("INSERT INTO employees (id,sno,fname,lname,dept,doj,salary,role,pcode,phone,email,dob,pass,status)
-        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,'Active')
+    execute("INSERT INTO employees (id,sno,fname,lname,dept,doj,salary,grossSalary,netSalary,pfAmount,incomeTax,role,pcode,phone,email,dob,pass,source,status)
+        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,'Active')
         ON DUPLICATE KEY UPDATE sno=VALUES(sno), fname=VALUES(fname), lname=VALUES(lname), dept=VALUES(dept),
-        doj=VALUES(doj), salary=VALUES(salary), role=VALUES(role), pcode=VALUES(pcode), phone=VALUES(phone),
-        email=VALUES(email), dob=VALUES(dob), status='Active'", [
+        doj=VALUES(doj), salary=VALUES(salary), grossSalary=VALUES(grossSalary), netSalary=VALUES(netSalary),
+        pfAmount=VALUES(pfAmount), incomeTax=VALUES(incomeTax), role=VALUES(role), pcode=VALUES(pcode), phone=VALUES(phone),
+        email=VALUES(email), dob=VALUES(dob), source=VALUES(source), status='Active'", [
         $p['id'] ?? '',
         (int)num($p['sno'] ?? 0),
         $p['fname'] ?? '',
@@ -281,13 +309,94 @@ function upsert_employee(array $p): void {
         $p['dept'] ?? '',
         $p['doj'] ?? '',
         num($p['salary'] ?? 0),
+        num($p['grossSalary'] ?? 0),
+        num($p['netSalary'] ?? 0),
+        num($p['pfAmount'] ?? 0),
+        num($p['incomeTax'] ?? 0),
         $p['role'] ?? '',
         $p['pcode'] ?? '+91',
         $p['phone'] ?? '',
         $p['email'] ?? '',
         $p['dob'] ?? '',
         $p['pass'] ?? 'emp123',
+        $p['source'] ?? 'manual',
     ]);
+}
+
+function normalize_crm_employee(array $row, int $idx): array {
+    $name = trim((string)($row['name'] ?? $row['employee_name'] ?? ''));
+    $parts = preg_split('/\s+/', $name, 2);
+    $fname = (string)($row['fname'] ?? $row['first_name'] ?? $parts[0] ?? '');
+    $lname = (string)($row['lname'] ?? $row['last_name'] ?? $parts[1] ?? '');
+    $salary = num($row['salary'] ?? $row['gross_salary'] ?? $row['ctc'] ?? 0);
+    return [
+        'id' => (string)($row['id'] ?? $row['emp_id'] ?? $row['employee_code'] ?? ('CRM-' . str_pad((string)($idx + 1), 5, '0', STR_PAD_LEFT))),
+        'sno' => (int)num($row['sno'] ?? $idx + 1),
+        'fname' => $fname ?: 'Employee',
+        'lname' => $lname,
+        'dept' => (string)($row['dept'] ?? $row['department'] ?? 'Sales'),
+        'doj' => (string)($row['doj'] ?? $row['date_of_joining'] ?? ''),
+        'salary' => $salary,
+        'grossSalary' => num($row['grossSalary'] ?? $row['gross_salary'] ?? $salary),
+        'netSalary' => num($row['netSalary'] ?? $row['net_salary'] ?? 0),
+        'pfAmount' => num($row['pfAmount'] ?? $row['pf'] ?? $row['pf_amount'] ?? 0),
+        'incomeTax' => num($row['incomeTax'] ?? $row['income_tax'] ?? $row['tds'] ?? 0),
+        'role' => (string)($row['role'] ?? $row['designation'] ?? ''),
+        'pcode' => (string)($row['pcode'] ?? $row['phone_code'] ?? '+91'),
+        'phone' => preg_replace('/\D+/', '', (string)($row['phone'] ?? $row['mobile'] ?? $row['phone_number'] ?? '')),
+        'email' => (string)($row['email'] ?? $row['email_address'] ?? ''),
+        'dob' => (string)($row['dob'] ?? $row['date_of_birth'] ?? ''),
+        'source' => 'crm',
+    ];
+}
+
+function fetch_crm_employees(): array {
+    $config = db_config();
+    $url = trim((string)$config['crm_employees_url']);
+    if ($url === '') {
+        throw new RuntimeException('CRM employees URL is not configured in public/config.php');
+    }
+    $headers = ['Accept: application/json'];
+    if (!empty($config['crm_bearer_token'])) {
+        $headers[] = 'Authorization: Bearer ' . $config['crm_bearer_token'];
+    }
+    if (function_exists('curl_init')) {
+        $ch = curl_init($url);
+        curl_setopt_array($ch, [
+            CURLOPT_RETURNTRANSFER => true,
+            CURLOPT_FOLLOWLOCATION => true,
+            CURLOPT_CONNECTTIMEOUT => 8,
+            CURLOPT_TIMEOUT => 30,
+            CURLOPT_HTTPHEADER => $headers,
+        ]);
+        $body = curl_exec($ch);
+        $code = (int)curl_getinfo($ch, CURLINFO_RESPONSE_CODE);
+        $err = curl_error($ch);
+        curl_close($ch);
+        if ($body === false || $code >= 400) {
+            throw new RuntimeException('CRM request failed: ' . ($err ?: 'HTTP ' . $code));
+        }
+    } else {
+        $body = file_get_contents($url, false, stream_context_create([
+            'http' => [
+                'method' => 'GET',
+                'timeout' => 30,
+                'header' => implode("\r\n", $headers),
+            ],
+        ]));
+        if ($body === false) {
+            throw new RuntimeException('CRM request failed');
+        }
+    }
+    $json = json_decode((string)$body, true);
+    if (!is_array($json)) {
+        throw new RuntimeException('CRM returned invalid JSON');
+    }
+    $rows = $json['employees'] ?? $json['data'] ?? $json;
+    if (!is_array($rows)) {
+        throw new RuntimeException('CRM response does not contain employees array');
+    }
+    return array_values(array_filter($rows, 'is_array'));
 }
 
 function handle_action(string $action, array $p): array {
@@ -295,7 +404,16 @@ function handle_action(string $action, array $p): array {
         case 'health':
             return ['status' => 'ok', 'database' => db_config()['name'], 'runtime' => 'php', 'schema' => schema_ready() ? 'ready' : 'created'];
         case 'getEmployees':
-            return ['status' => 'success', 'employees' => fetch_all("SELECT sno,id,fname,lname,dept,doj,salary,role,pcode,phone,email,dob,pass FROM employees WHERE status='Active' ORDER BY sno,id")];
+            return ['status' => 'success', 'employees' => fetch_all("SELECT sno,id,fname,lname,dept,doj,salary,grossSalary,netSalary,pfAmount,incomeTax,role,pcode,phone,email,dob,pass,source FROM employees WHERE status='Active' ORDER BY sno,id")];
+        case 'syncCrmEmployees':
+            $rows = fetch_crm_employees();
+            $imported = 0;
+            foreach ($rows as $idx => $row) {
+                upsert_employee(normalize_crm_employee($row, $idx));
+                $imported++;
+            }
+            audit_log($action, ['imported' => $imported]);
+            return ['status' => 'success', 'imported' => $imported];
         case 'getLeaves':
             return ['status' => 'success', 'leaves' => fetch_all("SELECT id,empId,empName,type,dateFrom AS `from`,dateTo AS `to`,days,reason,session,status,appliedOn,approvedBy FROM leaves ORDER BY appliedOn DESC,id DESC")];
         case 'getExpenses':

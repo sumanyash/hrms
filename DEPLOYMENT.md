@@ -32,6 +32,8 @@ find /var/www/hrms -type d -exec chmod 755 {} \;
 find /var/www/hrms -type f -exec chmod 644 {} \;
 ```
 
+For CRM sync, set `crm_employees_url` and `crm_bearer_token` in `public/config.php`.
+
 ## Nginx
 
 Use your installed PHP-FPM socket. On Debian 12 it is usually `/run/php/php8.2-fpm.sock`.

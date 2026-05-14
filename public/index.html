@@ -309,9 +309,23 @@ body.purple{--bg:#f5f0ff;--primary:#7c3aed;--primary-d:#6d28d9;--primary-l:#ede9
   .stats-row{grid-template-columns:1fr 1fr!important;}
   .fgrid{grid-template-columns:1fr!important;}
   #content{padding:14px;}
+  #topbar{padding:0 12px;}
+  .tb-title{font-size:13px;}
+  .card-hdr,.sec-hdr{align-items:stretch;}
+  .sec-hdr>div:last-child{width:100%;}
+  .sec-hdr .btn,.sec-hdr .fctrl{width:100% !important;justify-content:center;}
+  .tbl{min-width:760px;}
+  .modal{max-width:calc(100vw - 22px)!important;margin:0 10px;}
+  .login-box{margin:12px;}
+  .role-tabs{grid-template-columns:1fr 1fr;}
 }
 @media(max-width:480px){
   .stats-row{grid-template-columns:1fr!important;}
+  #content{padding:10px;}
+  .sec-title{font-size:17px;}
+  .stat-val{font-size:22px;}
+  .btn{padding:8px 12px;}
+  .login-body{padding:22px 20px;}
 }
 </style>
 </head>
@@ -521,7 +535,11 @@ body.purple{--bg:#f5f0ff;--primary:#7c3aed;--primary-d:#6d28d9;--primary-l:#ede9
         </div>
         <div class="fg"><label class="flabel">Role / Designation *</label><input class="fctrl" id="ne-role" placeholder="e.g. Software Executive" maxlength="80"/></div>
         <div class="fg"><label class="flabel">Date of Joining *</label><input class="fctrl" type="date" id="ne-doj"/></div>
-        <div class="fg"><label class="flabel">Salary (₹/month) *</label><input class="fctrl" type="number" id="ne-sal" placeholder="20000" min="1000" max="9999999"/></div>
+        <div class="fg"><label class="flabel">Base Salary (₹/month) *</label><input class="fctrl" type="number" id="ne-sal" placeholder="20000" min="1000" max="9999999" oninput="syncSalaryDefaults('ne')"/></div>
+        <div class="fg"><label class="flabel">Gross Salary</label><input class="fctrl" type="number" id="ne-gross" placeholder="Auto from base salary" min="0" max="9999999"/></div>
+        <div class="fg"><label class="flabel">Net Salary</label><input class="fctrl" type="number" id="ne-net" placeholder="Auto calculated if blank" min="0" max="9999999"/></div>
+        <div class="fg"><label class="flabel">PF Amount</label><input class="fctrl" type="number" id="ne-pf" placeholder="Auto calculated if blank" min="0" max="9999999"/></div>
+        <div class="fg"><label class="flabel">Income Tax / TDS</label><input class="fctrl" type="number" id="ne-tax" placeholder="Auto calculated if blank" min="0" max="9999999"/></div>
         <div class="fg">
           <label class="flabel">Phone Code *</label>
           <select class="fctrl" id="ne-pcode" onchange="updatePhoneValidation()">
@@ -574,7 +592,11 @@ body.purple{--bg:#f5f0ff;--primary:#7c3aed;--primary-d:#6d28d9;--primary-l:#ede9
         </div>
         <div class="fg"><label class="flabel">Role / Designation *</label><input class="fctrl" id="ee-role" maxlength="80"/></div>
         <div class="fg"><label class="flabel">Date of Joining</label><input class="fctrl" type="date" id="ee-doj"/></div>
-        <div class="fg"><label class="flabel">Salary (₹/month)</label><input class="fctrl" type="number" id="ee-sal" min="1000" max="9999999"/></div>
+        <div class="fg"><label class="flabel">Base Salary (₹/month)</label><input class="fctrl" type="number" id="ee-sal" min="1000" max="9999999" oninput="syncSalaryDefaults('ee')"/></div>
+        <div class="fg"><label class="flabel">Gross Salary</label><input class="fctrl" type="number" id="ee-gross" min="0" max="9999999"/></div>
+        <div class="fg"><label class="flabel">Net Salary</label><input class="fctrl" type="number" id="ee-net" min="0" max="9999999"/></div>
+        <div class="fg"><label class="flabel">PF Amount</label><input class="fctrl" type="number" id="ee-pf" min="0" max="9999999"/></div>
+        <div class="fg"><label class="flabel">Income Tax / TDS</label><input class="fctrl" type="number" id="ee-tax" min="0" max="9999999"/></div>
         <div class="fg"><label class="flabel">Phone Number</label><input class="fctrl" type="tel" id="ee-phone" maxlength="20"/></div>
         <div class="fg full"><label class="flabel">Email Address</label><input class="fctrl" type="email" id="ee-email" maxlength="100"/></div>
       </div>
@@ -1151,7 +1173,10 @@ const deptBadge  = d => ({ HR:'b-blue',Sales:'b-green',Support:'b-purple',Softwa
 function payCalc(sal, empId) {
   sal = Number(sal) || 0;
   const basic = Math.round(sal * .5), hra = Math.round(sal * .25);
-  const pf = Math.round(basic * .12), pt = 200, tds = Math.round(sal * .05);
+  const emp = empId ? S.employees.find(function(e){ return e.id === empId; }) : null;
+  const pf = emp && emp.pfAmount !== undefined && emp.pfAmount !== '' ? Number(emp.pfAmount) || 0 : Math.round(basic * .12);
+  const pt = 200;
+  const tds = emp && emp.incomeTax !== undefined && emp.incomeTax !== '' ? Number(emp.incomeTax) || 0 : Math.round(sal * .05);
   // Token bonuses this month
   const tokenBonus = empId
     ? S.tokens.filter(function(t){ return t.empId === empId; })
@@ -1162,10 +1187,11 @@ function payCalc(sal, empId) {
     ? S.cards.filter(function(c){ return c.empId === empId; })
         .reduce(function(s,c){ return s + Number(c.totalAmount||0); }, 0)
     : 0;
-  const baseNet = sal - pf - pt - tds;
+  const gross = emp && emp.grossSalary ? Number(emp.grossSalary) || sal : sal;
+  const baseNet = emp && emp.netSalary ? Number(emp.netSalary) || 0 : (gross - pf - pt - tds);
   const net = Math.max(0, baseNet + tokenBonus - cardPenalty);
   return { basic, hra, spec: Math.round(sal * .15), trans: Math.round(sal * .05),
-           gross: sal, pf, pt, tds, tokenBonus, cardPenalty, baseNet, net };
+           gross, pf, pt, tds, tokenBonus, cardPenalty, baseNet, net };
 }
 
 // ══════════════════════════════════════════════════
@@ -1991,20 +2017,21 @@ function pageEmployees() {
     <div style="display:flex;gap:8px;flex-wrap:wrap;">
       <input class="fctrl" id="emp-search" placeholder="🔍 Search..." oninput="filterEmps()" style="width:200px;padding:7px 12px;"/>
       ${S.role !== 'payroll' ? `<button class="btn btn-primary btn-sm" onclick="openAddEmpModal()">＋ Add Employee</button>
+      <button class="btn btn-outline btn-sm" onclick="syncCrmEmployees()">↻ Sync CRM</button>
       <button class="btn btn-outline btn-sm" onclick="openModal('bulkImportModal')">📥 Bulk Import</button>` : ''}
       <button class="btn btn-outline btn-sm" onclick="exportEmpsCSV()">📊 Export</button>
       <button class="btn btn-outline btn-sm" onclick="openIDCardModal()">🪪 ID Cards</button>
     </div>
   </div>
   <div class="card"><div style="overflow-x:auto;"><table class="tbl" id="emp-table">
-    <thead><tr><th>Employee</th><th>Department</th><th>Date of Joining</th><th>Salary</th><th>Role</th><th>Phone</th><th>Email</th><th>Actions</th></tr></thead>
+    <thead><tr><th>Employee</th><th>Department</th><th>Date of Joining</th><th>Gross</th><th>Net</th><th>PF</th><th>Role</th><th>Phone</th><th>Email</th><th>Actions</th></tr></thead>
     <tbody id="emp-tbody">${empRows(S.employees)}</tbody>
   </table></div></div>`;
 }
 
 function empRows(emps) {
   const canEdit = S.role === 'admin' || S.role === 'hr';
-  if (!emps.length) return '<tr><td colspan="8" style="text-align:center;padding:24px;color:var(--text3);">No employees loaded. Sync from Database.</td></tr>';
+  if (!emps.length) return '<tr><td colspan="10" style="text-align:center;padding:24px;color:var(--text3);">No employees loaded. Sync from CRM or add employees.</td></tr>';
   return emps.map((e, i) => {
     const empPhoto = getPhoto(e.id);
     const photoEl = empPhoto
@@ -2015,7 +2042,9 @@ function empRows(emps) {
     <div><div class="emp-nm">${esc(e.fname)} ${esc(e.lname)}</div><div class="emp-id">${esc(e.id)}</div></div></div></td>
     <td><span class="badge ${deptBadge(e.dept)}">${esc(e.dept)}</span></td>
     <td style="font-size:11.5px;">${esc(e.doj || '—')}</td>
-    <td style="font-weight:700;">${fmt(e.salary)}</td>
+    <td style="font-weight:700;">${fmt(e.grossSalary || e.salary)}</td>
+    <td style="font-weight:700;color:var(--success);">${fmt(e.netSalary || payCalc(e.salary, e.id).net)}</td>
+    <td style="color:var(--danger);">${fmt(e.pfAmount || payCalc(e.salary, e.id).pf)}</td>
     <td style="font-size:12px;">${esc(e.role || '—')}</td>
     <td style="font-size:11.5px;">${esc(empPhone(e))}</td>
     <td style="font-size:11.5px;">${esc(e.email || '—')}</td>
@@ -2587,6 +2616,54 @@ function validatePhoneInput(inp) {
   else                   { stat.textContent = '✅'; stat.style.color = 'var(--success)'; }
 }
 
+async function syncCrmEmployees() {
+  if (!(S.role === 'admin' || S.role === 'hr')) { toast('Only Admin/HR can sync CRM employees', 'warn'); return; }
+  const ok = confirm('Fetch employees from CRM and update HRMS records?');
+  if (!ok) return;
+  showLoader('Syncing CRM employees...');
+  try {
+    const r = await postToSheetJSON({ action:'syncCrmEmployees' });
+    if (r && r.status === 'success') {
+      toast('✅ CRM sync completed: ' + (r.imported || 0) + ' employee(s)', 'success');
+      await loadAllData();
+      navigate('employees');
+      buildSidebar();
+    } else {
+      toast('CRM sync failed: ' + (r && r.message ? r.message : 'Check CRM config'), 'error');
+    }
+  } catch (e) {
+    toast('CRM sync error: ' + e.message, 'error');
+  } finally {
+    hideLoader();
+  }
+}
+
+function syncSalaryDefaults(prefix) {
+  const salEl = $(prefix + '-sal');
+  const grossEl = $(prefix + '-gross');
+  const pfEl = $(prefix + '-pf');
+  const taxEl = $(prefix + '-tax');
+  const netEl = $(prefix + '-net');
+  const sal = Number(salEl ? salEl.value : 0) || 0;
+  const basic = Math.round(sal * .5);
+  const pf = Math.round(basic * .12);
+  const tax = Math.round(sal * .05);
+  const net = Math.max(0, sal - pf - 200 - tax);
+  if (grossEl && !grossEl.value) grossEl.value = sal || '';
+  if (pfEl && !pfEl.value) pfEl.value = sal ? pf : '';
+  if (taxEl && !taxEl.value) taxEl.value = sal ? tax : '';
+  if (netEl && !netEl.value) netEl.value = sal ? net : '';
+}
+
+function salaryFields(prefix) {
+  return {
+    grossSalary: Number($(prefix + '-gross') ? $(prefix + '-gross').value : 0) || 0,
+    netSalary: Number($(prefix + '-net') ? $(prefix + '-net').value : 0) || 0,
+    pfAmount: Number($(prefix + '-pf') ? $(prefix + '-pf').value : 0) || 0,
+    incomeTax: Number($(prefix + '-tax') ? $(prefix + '-tax').value : 0) || 0,
+  };
+}
+
 function openAddEmpModal() {
   // Auto-generate Employee Code (readonly, not editable by user)
   const maxSno = S.employees.reduce((m, e) => Math.max(m, parseInt(e.sno) || 0), 0);
@@ -2602,9 +2679,9 @@ function openAddEmpModal() {
     codeEl.style.cursor = 'not-allowed';
   }
 
-  // Date of Joining: max = today
+  // Date of Joining supports future joining dates for offer / pre-onboarding records.
   const dojEl = $('ne-doj');
-  if (dojEl) dojEl.max = today();
+  if (dojEl) dojEl.removeAttribute('max');
 
   // Date of Birth: max = exactly 18 years before today (employee must be 18+)
   const dobEl = $('ne-dob');
@@ -2635,7 +2712,6 @@ async function saveEmployee() {
   if (!lname)             { toast('Please enter last name', 'error'); return; }
   if (!role)              { toast('Please enter role', 'error'); return; }
   if (!doj)               { toast('Please select date of joining', 'error'); return; }
-  if (doj > today())      { toast('Date of joining cannot be future', 'error'); return; }
   if (!sal || sal < 1000) { toast('Please enter a valid salary (min ₹1000)', 'error'); return; }
 
   // DOB age validation: must be at least 18 years old
@@ -2653,6 +2729,7 @@ async function saveEmployee() {
 
   const maxSno = S.employees.reduce((m, e) => Math.max(m, parseInt(e.sno) || 0), 0);
   const newSno = maxSno + 1;
+  const salMeta = salaryFields('ne');
   const newEmp = {
     sno: newSno,
     id:  autoCode || ('AVY-' + String(18000 + newSno).padStart(5, '0')),
@@ -2660,6 +2737,7 @@ async function saveEmployee() {
     dept:   $('ne-dept').value,
     doj:    doj.split('-').reverse().join('/'),
     salary: sal, role,
+    ...salMeta,
     pcode:  phoneCode,
     phone:  digits,
     email, dob, pass: 'emp123'
@@ -2668,7 +2746,7 @@ async function saveEmployee() {
   S.employees.push(newEmp);
   populateEmpSelect();
   closeModal('addEmpModal');
-  ['ne-fname','ne-lname','ne-role','ne-doj','ne-sal','ne-phone','ne-email','ne-dob'].forEach(id => { const el = $(id); if (el) el.value = ''; });
+  ['ne-fname','ne-lname','ne-role','ne-doj','ne-sal','ne-gross','ne-net','ne-pf','ne-tax','ne-phone','ne-email','ne-dob'].forEach(id => { const el = $(id); if (el) el.value = ''; });
   // Employee Code is auto-regenerated on next openAddEmpModal() — just clear for now
   if ($('ne-code')) { $('ne-code').value = ''; }
   if ($('ne-pcode')) $('ne-pcode').value = '+91';
@@ -2677,7 +2755,7 @@ async function saveEmployee() {
   if (S.page === 'employees') navigate(S.page);
 
   const restore = showLoader; showLoader('Saving…');
-  const r = await postToSheetJSON({ action:'addEmployee', sno:newEmp.sno, id:newEmp.id, fname:newEmp.fname, lname:newEmp.lname, dept:newEmp.dept, doj:newEmp.doj, salary:newEmp.salary, role:newEmp.role, pcode:phoneCode, phone:digits, email:newEmp.email, dob:newEmp.dob });
+  const r = await postToSheetJSON({ action:'addEmployee', sno:newEmp.sno, id:newEmp.id, fname:newEmp.fname, lname:newEmp.lname, dept:newEmp.dept, doj:newEmp.doj, salary:newEmp.salary, grossSalary:newEmp.grossSalary, netSalary:newEmp.netSalary, pfAmount:newEmp.pfAmount, incomeTax:newEmp.incomeTax, role:newEmp.role, pcode:phoneCode, phone:digits, email:newEmp.email, dob:newEmp.dob });
   hideLoader();
   if (r && r.status === 'success') toast('✅ Saved to Database', 'success');
   else toast('⚠ Saved locally — DB sync pending', 'warn');
@@ -2691,6 +2769,10 @@ function openEditEmp(empId) {
   const set = (id, val) => { const el = $(id); if (el) el.value = val || ''; };
   set('ee-code', emp.id); set('ee-fname', emp.fname); set('ee-lname', emp.lname);
   set('ee-role', emp.role); set('ee-sal', emp.salary);
+  set('ee-gross', emp.grossSalary || '');
+  set('ee-net', emp.netSalary || '');
+  set('ee-pf', emp.pfAmount || '');
+  set('ee-tax', emp.incomeTax || '');
   // Populate phone: use split pcode+phone, or parse legacy combined "pcode digits"
   const rawPhone = emp.phone || '';
   const splitPhone = rawPhone.match(/^(\+\d+)\s+(.+)$/);
@@ -2721,6 +2803,11 @@ async function updateEmployee() {
   emp.dept   = $('ee-dept').value || emp.dept;
   emp.role   = role;
   emp.salary = parseInt($('ee-sal').value) || emp.salary;
+  const salMeta = salaryFields('ee');
+  emp.grossSalary = salMeta.grossSalary;
+  emp.netSalary = salMeta.netSalary;
+  emp.pfAmount = salMeta.pfAmount;
+  emp.incomeTax = salMeta.incomeTax;
   const eePhone = ($('ee-phone').value || '').trim().replace(/\D/g,'');
   const eePcode = ($('ee-pcode') ? $('ee-pcode').value : emp.pcode || '+91');
   emp.pcode = eePcode;
@@ -2735,7 +2822,7 @@ async function updateEmployee() {
 
   // FIX 3: updateEmployee action is now handled by doGet in AS (GET request)
   showLoader('Syncing data…');
-  const r = await postToSheet({ action:'updateEmployee', id:emp.id, sno:emp.sno||'', fname:emp.fname, lname:emp.lname, dept:emp.dept, doj:emp.doj||'', salary:emp.salary, role:emp.role, pcode:emp.pcode||'+91', phone:emp.phone||'', email:emp.email||'', updatedAt:new Date().toLocaleString('en-IN'), updatedBy:S.user.name||'Admin' });
+  const r = await postToSheet({ action:'updateEmployee', id:emp.id, sno:emp.sno||'', fname:emp.fname, lname:emp.lname, dept:emp.dept, doj:emp.doj||'', salary:emp.salary, grossSalary:emp.grossSalary, netSalary:emp.netSalary, pfAmount:emp.pfAmount, incomeTax:emp.incomeTax, role:emp.role, pcode:emp.pcode||'+91', phone:emp.phone||'', email:emp.email||'', updatedAt:new Date().toLocaleString('en-IN'), updatedBy:S.user.name||'Admin' });
   hideLoader();
   if (r && r.status === 'success') toast('✅ Database updated', 'success');
   else toast('⚠ Updated locally — DB sync pending', 'warn');
@@ -5473,29 +5560,42 @@ const STAGES = ['Applied','Shortlisted','Interview','Final Round','Offer','Hired
 function pageRecruitment() {
   const stageColors = { Applied:'b-gray',Shortlisted:'b-blue',Interview:'b-orange',
     'Final Round':'b-purple', Offer:'b-green', Hired:'b-green' };
+  const active = S.candidates.filter(c => c.stage !== 'Hired').length;
+  const hired = S.candidates.filter(c => c.stage === 'Hired').length;
 
   const columns = STAGES.map(function(stage) {
     const cards = S.candidates.filter(c => c.stage === stage);
-    return '<div style="flex:1;min-width:160px;max-width:200px;">'
-      + '<div style="padding:8px 12px;border-radius:var(--r) var(--r) 0 0;background:var(--surface2);border:1.5px solid var(--border);border-bottom:none;font-weight:800;font-size:12px;display:flex;justify-content:space-between;align-items:center;">'
+    const empty = '<div style="padding:18px 10px;text-align:center;color:var(--text3);font-size:11px;border:1px dashed var(--border2);border-radius:var(--r);">No candidates</div>';
+    return '<div style="flex:1;min-width:210px;max-width:250px;">'
+      + '<div style="padding:10px 12px;border-radius:var(--r) var(--r) 0 0;background:var(--surface2);border:1.5px solid var(--border);border-bottom:none;font-weight:800;font-size:12px;display:flex;justify-content:space-between;align-items:center;">'
       + '<span>' + esc(stage) + '</span><span class="badge ' + stageColors[stage] + '">' + cards.length + '</span></div>'
-      + '<div style="border:1.5px solid var(--border);border-radius:0 0 var(--r) var(--r);padding:8px;min-height:200px;background:var(--bg);">'
+      + '<div style="border:1.5px solid var(--border);border-radius:0 0 var(--r) var(--r);padding:10px;min-height:270px;background:var(--bg);">'
       + cards.map(function(c) {
-          return '<div style="background:var(--surface);border:1.5px solid var(--border);border-radius:var(--r);padding:10px;margin-bottom:8px;">'
-            + '<div style="font-weight:700;font-size:12.5px;">' + esc(c.name) + '</div>'
-            + '<div style="font-size:10.5px;color:var(--text3);margin-top:2px;">' + esc(c.role) + '</div>'
-            + '<div style="font-size:10.5px;color:var(--text3);">' + esc(c.dept) + '</div>'
+          const contact = [c.email, c.phone].filter(Boolean).join(' · ');
+          return '<div style="background:var(--surface);border:1.5px solid var(--border);border-radius:var(--r);padding:12px;margin-bottom:10px;box-shadow:var(--shadow);">'
+            + '<div style="display:flex;align-items:flex-start;gap:9px;">'
+            + '<div class="av" style="background:var(--primary);width:30px;height:30px;">' + esc((c.name || '?').slice(0,1).toUpperCase()) + '</div>'
+            + '<div style="min-width:0;flex:1;"><div style="font-weight:800;font-size:13px;">' + esc(c.name) + '</div>'
+            + '<div style="font-size:11px;color:var(--text2);margin-top:1px;">' + esc(c.role) + ' · ' + esc(c.dept) + '</div></div></div>'
+            + (contact ? '<div style="font-size:10.5px;color:var(--text3);margin-top:8px;word-break:break-word;">' + esc(contact) + '</div>' : '')
+            + (c.notes ? '<div style="font-size:11px;margin-top:8px;padding:7px 8px;background:var(--surface2);border-radius:var(--r);">' + esc(c.notes) + '</div>' : '')
             + '<div style="display:flex;gap:4px;margin-top:8px;flex-wrap:wrap;">'
             + (STAGES.indexOf(stage) > 0 ? '<button class="btn btn-outline btn-sm" style="font-size:10px;padding:3px 7px;" data-action="moveCandidate" data-id="' + esc(c.id) + '" data-dir="-1">← Back</button>' : '')
             + (STAGES.indexOf(stage) < STAGES.length - 1 ? '<button class="btn btn-primary btn-sm" style="font-size:10px;padding:3px 7px;" data-action="moveCandidate" data-id="' + esc(c.id) + '" data-dir="1">Move →</button>' : '')
             + '<button class="btn btn-outline btn-sm" style="font-size:10px;padding:3px 7px;" data-action="removeCandidate" data-id="' + esc(c.id) + '">✕</button>'
             + '</div></div>';
-        }).join('')
+        }).join('') + (cards.length ? '' : empty)
       + '</div></div>';
   }).join('');
 
   return '<div class="sec-hdr"><div><div class="sec-title">Recruitment Pipeline</div><div class="sec-sub">ATS KANBAN</div></div>'
     + '<button class="btn btn-primary btn-sm" onclick="openModal(\'addCandidateModal\')">➕ Add Candidate</button></div>'
+    + '<div class="stats-row">'
+    + '<div class="stat blue"><div class="stat-lbl">Total Candidates</div><div class="stat-val">' + S.candidates.length + '</div></div>'
+    + '<div class="stat orange"><div class="stat-lbl">Active Pipeline</div><div class="stat-val">' + active + '</div></div>'
+    + '<div class="stat green"><div class="stat-lbl">Hired</div><div class="stat-val">' + hired + '</div></div>'
+    + '<div class="stat purple"><div class="stat-lbl">Offer Stage</div><div class="stat-val">' + S.candidates.filter(c => c.stage === 'Offer').length + '</div></div>'
+    + '</div>'
     + '<div style="overflow-x:auto;"><div style="display:flex;gap:12px;min-width:max-content;padding-bottom:16px;">' + columns + '</div></div>';
 }
 
