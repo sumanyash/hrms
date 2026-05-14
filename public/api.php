@@ -25,13 +25,17 @@ function json_response(array $payload, int $status = 200): void {
 function db_config(): array {
     $configFile = __DIR__ . '/config.php';
     $fileConfig = is_file($configFile) ? require $configFile : [];
+    $crmUrl = $fileConfig['crm_employees_url'] ?? (getenv('CRM_EMPLOYEES_URL') ?: '');
+    if (trim((string)$crmUrl) === '') {
+        $crmUrl = 'https://urm.avyuktacrm.com/api/user_details.php';
+    }
     return [
         'host' => $fileConfig['host'] ?? getenv('DB_HOST') ?: '127.0.0.1',
         'port' => (int)($fileConfig['port'] ?? getenv('DB_PORT') ?: 3306),
         'name' => $fileConfig['name'] ?? getenv('DB_NAME') ?: 'hrms_db',
         'user' => $fileConfig['user'] ?? getenv('DB_USER') ?: 'hrms_user',
         'password' => $fileConfig['password'] ?? getenv('DB_PASSWORD') ?: '',
-        'crm_employees_url' => $fileConfig['crm_employees_url'] ?? getenv('CRM_EMPLOYEES_URL') ?: '',
+        'crm_employees_url' => $crmUrl,
         'crm_bearer_token' => $fileConfig['crm_bearer_token'] ?? getenv('CRM_BEARER_TOKEN') ?: '',
     ];
 }
@@ -108,6 +112,7 @@ function ensure_column(string $table, string $column, string $definition): void 
 }
 
 function ensure_employee_salary_columns(): void {
+    ensure_column('employees', 'crmUid', 'VARCHAR(80)');
     ensure_column('employees', 'grossSalary', 'DECIMAL(12,2) DEFAULT 0');
     ensure_column('employees', 'netSalary', 'DECIMAL(12,2) DEFAULT 0');
     ensure_column('employees', 'pfAmount', 'DECIMAL(12,2) DEFAULT 0');
@@ -118,12 +123,14 @@ function ensure_employee_salary_columns(): void {
 function ensure_indexes(): void {
     static $done = false;
     if ($done) return;
-    $marked = fetch_value("SELECT meta_value FROM hrms_meta WHERE meta_key = 'indexes_v1'");
+    $marked = fetch_value("SELECT meta_value FROM hrms_meta WHERE meta_key = 'indexes_v2'");
     if ($marked === 'done') {
         $done = true;
         return;
     }
     ensure_index('employees', 'idx_employees_status_dept', 'status, dept');
+    ensure_index('employees', 'idx_employees_crm_uid', 'crmUid');
+    ensure_index('employees', 'idx_employees_email', 'email');
     ensure_index('leaves', 'idx_leaves_emp_status', 'empId, status');
     ensure_index('leaves', 'idx_leaves_status_applied', 'status, appliedOn');
     ensure_index('expenses', 'idx_expenses_emp_status', 'empId, status');
@@ -132,7 +139,7 @@ function ensure_indexes(): void {
     ensure_index('cards', 'idx_cards_emp_issued', 'empId, issuedOn');
     ensure_index('attendance', 'idx_attendance_emp_date', 'empId, date');
     ensure_index('audit_log', 'idx_audit_action_created', 'action, createdAt');
-    execute("INSERT INTO hrms_meta (meta_key, meta_value) VALUES ('indexes_v1', 'done') ON DUPLICATE KEY UPDATE meta_value = VALUES(meta_value)");
+    execute("INSERT INTO hrms_meta (meta_key, meta_value) VALUES ('indexes_v2', 'done') ON DUPLICATE KEY UPDATE meta_value = VALUES(meta_value)");
     $done = true;
 }
 
@@ -151,6 +158,7 @@ function init_db(): void {
         dept VARCHAR(120),
         doj VARCHAR(40),
         salary DECIMAL(12,2) DEFAULT 0,
+        crmUid VARCHAR(80),
         grossSalary DECIMAL(12,2) DEFAULT 0,
         netSalary DECIMAL(12,2) DEFAULT 0,
         pfAmount DECIMAL(12,2) DEFAULT 0,
@@ -296,10 +304,10 @@ function audit_log(string $action, array $payload): void {
 }
 
 function upsert_employee(array $p): void {
-    execute("INSERT INTO employees (id,sno,fname,lname,dept,doj,salary,grossSalary,netSalary,pfAmount,incomeTax,role,pcode,phone,email,dob,pass,source,status)
-        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,'Active')
+    execute("INSERT INTO employees (id,sno,fname,lname,dept,doj,salary,crmUid,grossSalary,netSalary,pfAmount,incomeTax,role,pcode,phone,email,dob,pass,source,status)
+        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,'Active')
         ON DUPLICATE KEY UPDATE sno=VALUES(sno), fname=VALUES(fname), lname=VALUES(lname), dept=VALUES(dept),
-        doj=VALUES(doj), salary=VALUES(salary), grossSalary=VALUES(grossSalary), netSalary=VALUES(netSalary),
+        doj=VALUES(doj), salary=VALUES(salary), crmUid=VALUES(crmUid), grossSalary=VALUES(grossSalary), netSalary=VALUES(netSalary),
         pfAmount=VALUES(pfAmount), incomeTax=VALUES(incomeTax), role=VALUES(role), pcode=VALUES(pcode), phone=VALUES(phone),
         email=VALUES(email), dob=VALUES(dob), source=VALUES(source), status='Active'", [
         $p['id'] ?? '',
@@ -309,6 +317,7 @@ function upsert_employee(array $p): void {
         $p['dept'] ?? '',
         $p['doj'] ?? '',
         num($p['salary'] ?? 0),
+        $p['crmUid'] ?? null,
         num($p['grossSalary'] ?? 0),
         num($p['netSalary'] ?? 0),
         num($p['pfAmount'] ?? 0),
@@ -323,29 +332,52 @@ function upsert_employee(array $p): void {
     ]);
 }
 
+function crm_date(mixed $value): string {
+    $value = trim((string)$value);
+    if ($value === '') return '';
+    if (preg_match('/^(\d{4})-(\d{2})-(\d{2})/', $value, $m)) {
+        return $m[3] . '/' . $m[2] . '/' . $m[1];
+    }
+    return $value;
+}
+
+function mapped_department(string $dept): string {
+    $dept = trim($dept);
+    $known = ['HR', 'Sales', 'Support', 'Software', 'Accounts', 'Admin'];
+    foreach ($known as $item) {
+        if (strcasecmp($dept, $item) === 0) return $item;
+    }
+    return $dept !== '' ? $dept : 'Admin';
+}
+
 function normalize_crm_employee(array $row, int $idx): array {
     $name = trim((string)($row['name'] ?? $row['employee_name'] ?? ''));
     $parts = preg_split('/\s+/', $name, 2);
-    $fname = (string)($row['fname'] ?? $row['first_name'] ?? $parts[0] ?? '');
-    $lname = (string)($row['lname'] ?? $row['last_name'] ?? $parts[1] ?? '');
+    $fname = trim((string)($row['fname'] ?? $row['first_name'] ?? $parts[0] ?? ''));
+    $lname = trim((string)($row['lname'] ?? $row['lastname'] ?? $row['last_name'] ?? $parts[1] ?? ''));
+    $crmId = trim((string)($row['user_id'] ?? $row['crmUid'] ?? ''));
     $salary = num($row['salary'] ?? $row['gross_salary'] ?? $row['ctc'] ?? 0);
+    $phone = preg_replace('/\D+/', '', (string)($row['mob'] ?? $row['phone'] ?? $row['mobile'] ?? $row['phone_number'] ?? ''));
+    $countryCode = trim((string)($row['countryCode'] ?? $row['phone_code'] ?? $row['pcode'] ?? '+91'));
+    $pcode = str_starts_with($countryCode, '+') ? $countryCode : '+' . preg_replace('/\D+/', '', $countryCode);
     return [
-        'id' => (string)($row['id'] ?? $row['emp_id'] ?? $row['employee_code'] ?? ('CRM-' . str_pad((string)($idx + 1), 5, '0', STR_PAD_LEFT))),
+        'id' => $crmId !== '' ? ('CRM-' . $crmId) : (string)($row['id'] ?? $row['emp_id'] ?? $row['employee_code'] ?? ('CRM-' . str_pad((string)($idx + 1), 5, '0', STR_PAD_LEFT))),
+        'crmUid' => $crmId,
         'sno' => (int)num($row['sno'] ?? $idx + 1),
         'fname' => $fname ?: 'Employee',
         'lname' => $lname,
-        'dept' => (string)($row['dept'] ?? $row['department'] ?? 'Sales'),
-        'doj' => (string)($row['doj'] ?? $row['date_of_joining'] ?? ''),
+        'dept' => mapped_department((string)($row['department'] ?? $row['dept'] ?? 'Admin')),
+        'doj' => crm_date($row['association_date'] ?? $row['doj'] ?? $row['date_of_joining'] ?? ''),
         'salary' => $salary,
         'grossSalary' => num($row['grossSalary'] ?? $row['gross_salary'] ?? $salary),
         'netSalary' => num($row['netSalary'] ?? $row['net_salary'] ?? 0),
         'pfAmount' => num($row['pfAmount'] ?? $row['pf'] ?? $row['pf_amount'] ?? 0),
         'incomeTax' => num($row['incomeTax'] ?? $row['income_tax'] ?? $row['tds'] ?? 0),
-        'role' => (string)($row['role'] ?? $row['designation'] ?? ''),
-        'pcode' => (string)($row['pcode'] ?? $row['phone_code'] ?? '+91'),
-        'phone' => preg_replace('/\D+/', '', (string)($row['phone'] ?? $row['mobile'] ?? $row['phone_number'] ?? '')),
+        'role' => trim((string)($row['roles'] ?? $row['role'] ?? $row['designation'] ?? 'Employee')),
+        'pcode' => $pcode !== '+' ? $pcode : '+91',
+        'phone' => $phone,
         'email' => (string)($row['email'] ?? $row['email_address'] ?? ''),
-        'dob' => (string)($row['dob'] ?? $row['date_of_birth'] ?? ''),
+        'dob' => crm_date($row['dob'] ?? $row['date_of_birth'] ?? ''),
         'source' => 'crm',
     ];
 }
@@ -404,16 +436,54 @@ function handle_action(string $action, array $p): array {
         case 'health':
             return ['status' => 'ok', 'database' => db_config()['name'], 'runtime' => 'php', 'schema' => schema_ready() ? 'ready' : 'created'];
         case 'getEmployees':
-            return ['status' => 'success', 'employees' => fetch_all("SELECT sno,id,fname,lname,dept,doj,salary,grossSalary,netSalary,pfAmount,incomeTax,role,pcode,phone,email,dob,pass,source FROM employees WHERE status='Active' ORDER BY sno,id")];
+            return ['status' => 'success', 'employees' => fetch_all("SELECT sno,id,crmUid,fname,lname,dept,doj,salary,grossSalary,netSalary,pfAmount,incomeTax,role,pcode,phone,email,dob,pass,source FROM employees WHERE status='Active' ORDER BY sno,id")];
         case 'syncCrmEmployees':
             $rows = fetch_crm_employees();
+            $existingRows = fetch_all("SELECT id,crmUid,email,phone,fname,lname FROM employees WHERE status='Active'");
+            $existingCrm = [];
+            $existingEmails = [];
+            $existingPhones = [];
+            $existingNames = [];
+            foreach ($existingRows as $existing) {
+                if (!empty($existing['crmUid'])) $existingCrm[strtolower(trim((string)$existing['crmUid']))] = true;
+                if (!empty($existing['id']) && str_starts_with((string)$existing['id'], 'CRM-')) $existingCrm[strtolower(substr((string)$existing['id'], 4))] = true;
+                if (!empty($existing['email'])) $existingEmails[strtolower(trim((string)$existing['email']))] = true;
+                $phone = substr(preg_replace('/\D+/', '', (string)($existing['phone'] ?? '')), -10);
+                if ($phone !== '') $existingPhones[$phone] = true;
+                $name = strtolower(trim((string)($existing['fname'] ?? '') . ' ' . (string)($existing['lname'] ?? '')));
+                if ($name !== '') $existingNames[$name] = true;
+            }
             $imported = 0;
+            $skipped = 0;
+            $inactive = 0;
             foreach ($rows as $idx => $row) {
-                upsert_employee(normalize_crm_employee($row, $idx));
+                $status = strtolower(trim((string)($row['status'] ?? 'Active')));
+                if (in_array($status, ['deleted', 'inactive', 'archived'], true)) {
+                    $inactive++;
+                    continue;
+                }
+                $emp = normalize_crm_employee($row, $idx);
+                $crmKey = strtolower(trim((string)($emp['crmUid'] ?? '')));
+                $emailKey = strtolower(trim((string)($emp['email'] ?? '')));
+                $phoneKey = substr(preg_replace('/\D+/', '', (string)($emp['phone'] ?? '')), -10);
+                $nameKey = strtolower(trim((string)$emp['fname'] . ' ' . (string)$emp['lname']));
+                $duplicate = ($crmKey !== '' && isset($existingCrm[$crmKey]))
+                    || ($emailKey !== '' && isset($existingEmails[$emailKey]))
+                    || ($phoneKey !== '' && isset($existingPhones[$phoneKey]))
+                    || ($nameKey !== '' && isset($existingNames[$nameKey]));
+                if ($duplicate) {
+                    $skipped++;
+                    continue;
+                }
+                upsert_employee($emp);
+                if ($crmKey !== '') $existingCrm[$crmKey] = true;
+                if ($emailKey !== '') $existingEmails[$emailKey] = true;
+                if ($phoneKey !== '') $existingPhones[$phoneKey] = true;
+                if ($nameKey !== '') $existingNames[$nameKey] = true;
                 $imported++;
             }
-            audit_log($action, ['imported' => $imported]);
-            return ['status' => 'success', 'imported' => $imported];
+            audit_log($action, ['total' => count($rows), 'imported' => $imported, 'skipped' => $skipped, 'inactive' => $inactive]);
+            return ['status' => 'success', 'total' => count($rows), 'imported' => $imported, 'skipped' => $skipped, 'inactive' => $inactive];
         case 'getLeaves':
             return ['status' => 'success', 'leaves' => fetch_all("SELECT id,empId,empName,type,dateFrom AS `from`,dateTo AS `to`,days,reason,session,status,appliedOn,approvedBy FROM leaves ORDER BY appliedOn DESC,id DESC")];
         case 'getExpenses':

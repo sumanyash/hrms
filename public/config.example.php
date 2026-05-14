@@ -5,6 +5,6 @@ return [
     'name' => 'hrms_db',
     'user' => 'hrms_user',
     'password' => 'change-this-password',
-    'crm_employees_url' => '',
+    'crm_employees_url' => 'https://urm.avyuktacrm.com/api/user_details.php',
     'crm_bearer_token' => '',
 ];

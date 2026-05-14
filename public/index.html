@@ -2624,7 +2624,7 @@ async function syncCrmEmployees() {
   try {
     const r = await postToSheetJSON({ action:'syncCrmEmployees' });
     if (r && r.status === 'success') {
-      toast('✅ CRM sync completed: ' + (r.imported || 0) + ' employee(s)', 'success');
+      toast('✅ CRM sync: ' + (r.imported || 0) + ' added, ' + (r.skipped || 0) + ' skipped, ' + (r.inactive || 0) + ' inactive', 'success');
       await loadAllData();
       navigate('employees');
       buildSidebar();

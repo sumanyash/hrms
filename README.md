@@ -32,12 +32,12 @@ return [
     'name' => 'hrms_db',
     'user' => 'hrms_user',
     'password' => 'your-password',
-    'crm_employees_url' => '',
+    'crm_employees_url' => 'https://urm.avyuktacrm.com/api/user_details.php',
     'crm_bearer_token' => '',
 ];
 ```
 
-Set `crm_employees_url` and `crm_bearer_token` when CRM employee sync is available.
+The default CRM sync endpoint is Avyukta CRM `user_details.php`. Set `crm_bearer_token` only if that API starts requiring authentication.
 
 Default admin login:
 
