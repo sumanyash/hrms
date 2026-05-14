@@ -1092,8 +1092,8 @@ body.purple{--bg:#f5f0ff;--primary:#7c3aed;--primary-d:#6d28d9;--primary-l:#ede9
 // ══════════════════════════════════════════════════
 //  CONFIG
 // ══════════════════════════════════════════════════
-const SCRIPT_URL = '/api/hrms';
-const SHEET_ID   = 'local-sqlite';
+const SCRIPT_URL = '/api.php';
+const SHEET_ID   = 'local-mariadb';
 const CSV_URL    = '';
 const SESSION_TTL = 8 * 60 * 60 * 1000; // 8 hours
 
@@ -5897,7 +5897,7 @@ function pageSettings() {
     + '<div style="display:flex;gap:6px;">'
     + '<button class="btn btn-primary btn-sm" onclick="copyASCode()">📋 Copy API Info</button>'
     + '</div></div>'
-    + '<div class="card-body"><div class="info-box warn" style="margin-bottom:10px;">⚠ This project now uses the local Node API and SQLite database. No Google Apps Script deployment is required.</div>'
+    + '<div class="card-body"><div class="info-box warn" style="margin-bottom:10px;">⚠ This project now uses the simple PHP API and MariaDB database. No Google Apps Script deployment is required.</div>'
     + '<textarea class="fctrl" id="as-code-area" rows="20" readonly style="font-family:monospace;font-size:11px;background:var(--bg);">' + esc(asCode) + '</textarea>'
     + '</div></div>';
 }
@@ -5906,13 +5906,13 @@ function pageSettings() {
 // so it is NEVER executed as a template literal
 function buildAppsScriptCode() {
   return [
-    "HRMS is connected to the local Node API and SQLite database.",
+    "HRMS is connected to the simple PHP API and MariaDB database.",
     "",
     "API endpoint: " + SCRIPT_URL,
-    "Database engine: SQLite",
-    "Database file: data/hrms.db",
+    "Database engine: MariaDB",
+    "Runtime: PHP-FPM",
     "",
-    "Supported core actions:",
+    "Supported PHP API actions:",
     "- getEmployees, addEmployee, updateEmployee, deleteEmployee",
     "- getLeaves, addLeave, updateLeaveStatus",
     "- getExpenses, addExpense, updateExpenseStatus",

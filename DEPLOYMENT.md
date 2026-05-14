@@ -1,76 +1,83 @@
-# Server Deployment
+# PHP Deployment
 
-## VPS / Ubuntu
-
-Install runtime:
+## Install Packages
 
 ```bash
 sudo apt update
-sudo apt install -y nodejs npm mariadb-server nginx
+sudo apt install -y nginx mariadb-server php-fpm php-mysql
 ```
 
-Create database:
+## Database
 
 ```bash
 mysql -uroot -p
 ```
 
 ```sql
-CREATE DATABASE hrms_db CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
-CREATE USER 'hrms_user'@'localhost' IDENTIFIED BY 'change-this-password';
+CREATE DATABASE IF NOT EXISTS hrms_db CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
+CREATE USER IF NOT EXISTS 'hrms_user'@'localhost' IDENTIFIED BY 'HRMSStrongPass_2026!';
 GRANT ALL PRIVILEGES ON hrms_db.* TO 'hrms_user'@'localhost';
 FLUSH PRIVILEGES;
 EXIT;
 ```
 
-Install app dependencies:
+## App Config
 
 ```bash
 cd /var/www/hrms
-npm install
+cp public/config.example.php public/config.php
+nano public/config.php
+chown -R www-data:www-data /var/www/hrms
+find /var/www/hrms -type d -exec chmod 755 {} \;
+find /var/www/hrms -type f -exec chmod 644 {} \;
 ```
 
-For production, use PM2:
+## Nginx
 
-```bash
-sudo npm install -g pm2
-cd /var/www/hrms
-HOST=127.0.0.1 PORT=3000 DB_HOST=127.0.0.1 DB_NAME=hrms_db DB_USER=hrms_user DB_PASSWORD=change-this-password pm2 start src/server.js --name hrms
-pm2 save
-pm2 startup
-```
-
-## Nginx Reverse Proxy
+Use your installed PHP-FPM socket. On Debian 12 it is usually `/run/php/php8.2-fpm.sock`.
 
 ```nginx
 server {
-  server_name your-domain.com;
+    server_name hrms.clouddialer.in;
+    root /var/www/hrms/public;
+    index index.html index.php;
 
-  location / {
-    proxy_pass http://127.0.0.1:3000;
-    proxy_http_version 1.1;
-    proxy_set_header Host $host;
-    proxy_set_header X-Real-IP $remote_addr;
-    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-    proxy_set_header X-Forwarded-Proto $scheme;
-  }
+    location / {
+        try_files $uri $uri/ /index.html;
+    }
+
+    location ~ \.php$ {
+        include snippets/fastcgi-php.conf;
+        fastcgi_pass unix:/run/php/php8.2-fpm.sock;
+    }
+
+    listen 443 ssl;
+    ssl_certificate /etc/letsencrypt/live/hrms.clouddialer.in/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/hrms.clouddialer.in/privkey.pem;
+}
+
+server {
+    listen 80;
+    server_name hrms.clouddialer.in;
+    return 301 https://$host$request_uri;
 }
 ```
 
-## Docker
+Then:
 
 ```bash
-docker build -t avyukta-hrms .
-docker run -d --name hrms -p 3000:3000 \
-  -e DB_HOST=host.docker.internal \
-  -e DB_NAME=hrms_db \
-  -e DB_USER=hrms_user \
-  -e DB_PASSWORD=change-this-password \
-  avyukta-hrms
+nginx -t
+systemctl reload nginx
 ```
 
-## Notes
+## Test
 
-- The app no longer needs Google Sheets or Apps Script.
-- MariaDB stores all HRMS data. Back up `hrms_db` regularly.
-- Put Nginx/Cloudflare SSL in front of the Node server for production.
+```bash
+curl "https://hrms.clouddialer.in/api.php?action=health"
+```
+
+Expected:
+
+```json
+{"status":"ok","database":"hrms_db","runtime":"php"}
+```
